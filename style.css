@@ -9,4 +9,6 @@ button.contact{background:none;color:inherit;text-align:left;padding:4px 0;min-h
 
 .thought-context{display:block;font-size:11px;font-weight:400;color:#a8b9ae;margin-top:2px}
 
-.remove-thought{display:block;margin:7px 0 0 auto;padding:6px 10px;min-height:34px;background:transparent;color:#c8d9ce;font-size:12px;border:1px solid #526558;border-radius:12px}.removed-thought{border-bottom:1px solid #353b37;padding-top:10px}.removed-thought p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}
+.removed-thought{border-bottom:1px solid #353b37;padding-top:10px}.removed-thought p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}
+
+.message-manageable{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-y pinch-zoom}.message-manageable img{-webkit-touch-callout:none;user-select:none}.message-manageable:focus-visible{outline:2px solid #b3d9c2;outline-offset:2px}.message-selected{outline:2px solid #87b69b;outline-offset:2px}.message-actions{position:fixed;inset:auto 0 max(12px,env(safe-area-inset-bottom));margin:0 auto;padding:18px;max-width:440px;border-radius:20px}.message-actions h2{font-size:14px;font-weight:500;text-align:center;color:#b8c4bd;margin:0 0 14px}.message-actions button{display:block;width:100%;min-height:48px;padding:12px;border-radius:12px;font-size:17px}.remove-selected-message{background:#302523;color:#ffaba2}.cancel-message-actions{background:#2a302c;color:#f4f4f4;margin-top:8px}
