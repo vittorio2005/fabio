@@ -38,3 +38,13 @@ Gli orari dell'esportazione sono conservati come testo, senza conversione di fus
 Il formato `.opus` dipende dal supporto audio del browser: verificare i vocali su Safari dell'iPhone prima della consegna. Sono stati verificati parser, conservazione di date e orari, attribuzione dei mittenti, identificativi per evitare duplicati e riferimenti HTML. Non è stato possibile eseguire la prova completa con un browser in questo ambiente.
 
 JSZip è incluso localmente in `vendor/`; la relativa licenza è nella stessa cartella.
+
+## Salvataggio online con link riservato
+
+Quando si apre un link con una chiave nel frammento `#chat=...`, l'app usa un archivio online cifrato. Il link completo non va mai inserito nella repository o in un sito pubblico. Chi possiede il link può leggere e inviare messaggi. L'accesso è basato sul possesso del link, non su un account personale. Il gestore del sito può modificare il codice futuro: non è una garanzia di isolamento dal gestore.
+
+Il client deriva separatamente una chiave AES-GCM e un token di accesso; la chiave di cifratura resta nel browser, mentre il server verifica l'hash del token. La cronologia iniziale è un archivio cifrato e ogni nuovo messaggio è un oggetto cifrato indipendente. Il frammento del link non viene inviato nelle richieste HTTP. Il backend conserva solo contenuti cifrati e non espone operazioni di cancellazione.
+
+IndexedDB conserva una copia sul dispositivo e una coda persistente dei messaggi in attesa. La dicitura “Salvato online” appare dopo la conferma del server. Senza connessione i messaggi restano in attesa sul dispositivo e vengono ritentati al ritorno online. Se si cancellano i dati del dispositivo prima della sincronizzazione, i messaggi ancora in attesa possono andare persi. I backup esportati sono in chiaro e vanno custoditi privatamente.
+
+Il primo caricamento richiede una connessione e il download della cronologia. Riaprendo lo stesso link su un altro dispositivo si recuperano i messaggi sincronizzati. Il vecchio archivio esclusivamente locale resta nel proprio database separato e non viene caricato automaticamente nel cloud.
