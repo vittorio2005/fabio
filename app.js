@@ -9,11 +9,49 @@ const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromChar
 const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 async function seal(value){return value}
 async function open(value){return value}
-function database(){return new Promise((resolve,reject)=>{const request=indexedDB.open(window.ChatCloud?'fabietto-cloud-'+cloudDatabaseId:'fabietto-local-v1',1);request.onupgradeneeded=()=>{request.result.createObjectStore('config');request.result.createObjectStore('messages',{keyPath:'id'})};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
-function read(store,id){return new Promise((resolve,reject)=>{const request=db.transaction(store).objectStore(store).get(id);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
-function all(){return new Promise((resolve,reject)=>{const r=db.transaction('messages').objectStore('messages').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
-function write(store,value,id){return new Promise((resolve,reject)=>{const tx=db.transaction(store,'readwrite');const s=tx.objectStore(store);id===undefined?s.put(value):s.put(value,id);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)})}
-function replaceDatabase(c,items){return new Promise((resolve,reject)=>{const tx=db.transaction(['config','messages'],'readwrite');tx.objectStore('config').put(c,'main');const s=tx.objectStore('messages');s.clear();items.forEach(item=>s.put(item));tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)})}
+let dbOpening=null;
+function database(){return new Promise((resolve,reject)=>{
+ const request=indexedDB.open(window.ChatCloud?'fabietto-cloud-'+cloudDatabaseId:'fabietto-local-v1',1);
+ request.onupgradeneeded=()=>{request.result.createObjectStore('config');request.result.createObjectStore('messages',{keyPath:'id'})};
+ request.onsuccess=()=>{const connection=request.result;
+  connection.onclose=()=>{if(db===connection)db=null};
+  connection.onversionchange=()=>{connection.close();if(db===connection)db=null};
+  resolve(connection);
+ };request.onerror=()=>reject(request.error);
+})}
+async function ensureDatabase(){
+ if(db)return db;
+ if(!dbOpening)dbOpening=database().then(connection=>{db=connection;return connection}).finally(()=>{dbOpening=null});
+ return dbOpening;
+}
+async function withDatabase(operation){
+ for(let attempt=0;attempt<3;attempt++){
+  const connection=await ensureDatabase();
+  try{return await operation(connection)}catch(error){
+   const interrupted=['InvalidStateError','UnknownError','AbortError'].includes(error?.name)||/connection.*clos|database.*clos/i.test(error?.message||'');
+   if(!interrupted||attempt===2)throw error;
+   // WebKit may close IndexedDB while the archive is downloading or Safari is suspended.
+   // Retry the whole atomic transaction on a fresh connection; never delete the database.
+   if(db===connection)db=null;
+   try{connection.close()}catch{}
+  }
+ }
+}
+function transaction(stores,mode,enqueue){return withDatabase(connection=>new Promise((resolve,reject)=>{
+ let tx,result;
+ try{
+  tx=connection.transaction(stores,mode);
+  tx.oncomplete=()=>resolve(result);
+  tx.onerror=tx.onabort=()=>reject(tx.error||new DOMException('Operazione interrotta.','AbortError'));
+  const request=enqueue(tx);if(request)request.onsuccess=()=>{result=request.result};
+ }catch(error){try{tx?.abort()}catch{}reject(error)}
+}))}
+function read(store,id){return transaction(store,'readonly',tx=>tx.objectStore(store).get(id))}
+function all(){return transaction('messages','readonly',tx=>tx.objectStore('messages').getAll())}
+function write(store,value,id){return transaction(store,'readwrite',tx=>{const s=tx.objectStore(store);id===undefined?s.put(value):s.put(value,id)})}
+function replaceDatabase(c,items){return transaction(['config','messages'],'readwrite',tx=>{
+ tx.objectStore('config').put(c,'main');const s=tx.objectStore('messages');s.clear();items.forEach(item=>s.put(item));
+})}
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6000)}
 function renderProfile(){$('contact-title').textContent=profile.name;$('avatar').replaceChildren();if(profile.photo){const img=document.createElement('img');img.src=profile.photo;img.alt='';$('avatar').append(img)}else $('avatar').textContent='🤍';$('backup-status').textContent=config.lastBackup?'Ultima esportazione: '+new Date(config.lastBackup).toLocaleString('it-IT'):'Nessun backup esportato su questo dispositivo.'}
 function dataBlob(data){const [header,body]=data.split(',');const mime=header.match(/^data:(.+);base64$/)?.[1];if(!mime)throw Error('Formato allegato non valido.');return new Blob([unb64(body)],{type:mime})}
@@ -47,8 +85,8 @@ async function chooseBackup(){const file=$('backup-input').files[0];$('backup-in
 $('composer').addEventListener('submit',send);$('message-input').addEventListener('input',composerState);$('attach').onclick=()=>$('attachment-input').click();$('attachment-input').onchange=chooseAttachment;$('save-attachment').onclick=saveAttachment;$('media-dialog').addEventListener('close',releaseMedia);$('voice').onclick=startRecording;$('cancel-record').onclick=()=>stopRecording(true);$('stop-record').onclick=()=>stopRecording(false);$('menu-button').onclick=$('profile-button').onclick=$('contact-profile').onclick=()=>$('settings').showModal();document.querySelectorAll('.close-dialog').forEach(b=>b.onclick=()=>b.closest('dialog').close());$('backup').onclick=backup;$('restore').onclick=()=>$('backup-input').click();$('backup-input').onchange=chooseBackup;
 window.addEventListener('pagehide',()=>{if(recorder)stopRecording(true)});
 function cloudStatus(text){$('sync-status').textContent=text}
-async function initializeChat(){try{if(window.ChatCloud)cloudDatabaseId=await ChatCloud.ready;db=await database();config=await read('config','main');if(!config){config={version:1,lastBackup:null};await write('config',config,'main')}key=true;profile={name:'Fabietto🦋🤍',photo:'fabietto.png'};records=(await all()).map(r=>({...r.payload,id:r.id})).sort((a,b)=>a.date-b.date);$('chat').hidden=false;render();renderProfile();navigator.storage?.persist?.().catch(()=>{});if(window.ChatCloud){$('whatsapp-import').hidden=true;$('import-note').hidden=true;$('restore').hidden=true;$('sync-now').hidden=false;$('storage-note').textContent='I messaggi vengono cifrati prima di essere salvati online. Conserva il link riservato: chi lo possiede può aprire questa chat. Puoi anche esportare una copia in File; il backup esportato contiene i messaggi in chiaro.';$('composer').hidden=!config.seedLoaded;await initializeCloud()}}catch{$('chat').hidden=false;$('composer').hidden=true;toast('Impossibile aprire lo spazio. Riprova in Safari senza navigazione privata.')}}
-async function initializeCloud(){if(cloudInitialized)return;cloudStatus('Caricamento della cronologia…');try{if(!config.seedLoaded){const zip=await ChatCloud.seed();const parsed=await readWhatsAppArchive(zip,JSZip);const author=parsed.authors.find(name=>!/fabio|fabietto/i.test(name));if(!author)throw Error('Mittente non riconosciuto.');const seeded=await prepareWhatsAppMessages(parsed,author,(done,total)=>cloudStatus('Preparazione '+Math.round(done/total*100)+'%'));const merged=new Map(seeded.map(r=>[r.id,r]));records.forEach(r=>merged.set(r.id,r));const next=[...merged.values()].sort((a,b)=>a.date-b.date||(a.importOrder??0)-(b.importOrder??0));const nextConfig={...config,seedLoaded:true};await replaceDatabase(nextConfig,next.map(r=>({id:r.id,payload:r})));config=nextConfig;records=next;render()}cloudInitialized=true;$('composer').hidden=false;await syncCloud()}catch(e){cloudStatus(config.seedLoaded?'Offline · cronologia sul dispositivo':'Connessione necessaria · tocca ↻ nelle info');toast(e.message||'Impossibile caricare la cronologia. Riprova.')}}
+async function initializeChat(){try{if(window.ChatCloud)cloudDatabaseId=await ChatCloud.ready;db=await ensureDatabase();config=await read('config','main');if(!config){config={version:1,lastBackup:null};await write('config',config,'main')}key=true;profile={name:'Fabietto🦋🤍',photo:'fabietto.png'};records=(await all()).map(r=>({...r.payload,id:r.id})).sort((a,b)=>a.date-b.date);$('chat').hidden=false;render();renderProfile();navigator.storage?.persist?.().catch(()=>{});if(window.ChatCloud){$('whatsapp-import').hidden=true;$('import-note').hidden=true;$('restore').hidden=true;$('sync-now').hidden=false;$('storage-note').textContent='I messaggi vengono cifrati prima di essere salvati online. Conserva il link riservato: chi lo possiede può aprire questa chat. Puoi anche esportare una copia in File; il backup esportato contiene i messaggi in chiaro.';$('composer').hidden=!config.seedLoaded;await initializeCloud()}}catch{$('chat').hidden=false;$('composer').hidden=true;toast('Impossibile aprire lo spazio. Riprova in Safari senza navigazione privata.')}}
+async function initializeCloud(){if(cloudInitialized)return;cloudStatus('Caricamento della cronologia…');try{if(!config.seedLoaded){const zip=await ChatCloud.seed();const parsed=await readWhatsAppArchive(zip,JSZip);const author=parsed.authors.find(name=>!/fabio|fabietto/i.test(name));if(!author)throw Error('Mittente non riconosciuto.');const seeded=await prepareWhatsAppMessages(parsed,author,(done,total)=>cloudStatus('Preparazione '+Math.round(done/total*100)+'%'));const merged=new Map(seeded.map(r=>[r.id,r]));records.forEach(r=>merged.set(r.id,r));const next=[...merged.values()].sort((a,b)=>a.date-b.date||(a.importOrder??0)-(b.importOrder??0));const nextConfig={...config,seedLoaded:true};await replaceDatabase(nextConfig,next.map(r=>({id:r.id,payload:r})));config=nextConfig;records=next;render()}cloudInitialized=true;$('composer').hidden=false;await syncCloud()}catch(e){cloudStatus(config.seedLoaded?'Offline · cronologia sul dispositivo':'Caricamento interrotto · riprova nelle info');toast(e.message||'Impossibile caricare la cronologia. Riprova.')}}
 async function syncCloud(){if(!window.ChatCloud||cloudSyncing||!cloudInitialized)return;cloudSyncing=true;try{cloudStatus('Sincronizzazione…');let changed=false;for(const record of records.filter(r=>r.pendingCloud)){await ChatCloud.put(record);const updated={...record,pendingCloud:false};await write('messages',{id:record.id,payload:updated});Object.assign(record,updated);changed=true;const label=[...$('messages').querySelectorAll('[data-message-id]')].find(e=>e.dataset.messageId===record.id)?.querySelector('time');if(label){const stamp=recordStamp(record);label.textContent=stamp.day+' · '+stamp.time}}
  const known=new Set(records.map(r=>r.id)),ids=await ChatCloud.list();for(const id of ids){if(known.has(id))continue;const record=await ChatCloud.get(id);await write('messages',{id,payload:record});records.push(record);known.add(id);changed=true}if(changed){records.sort((a,b)=>a.date-b.date||(a.importOrder??0)-(b.importOrder??0));const atBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<100;if(atBottom&&!Array.from(document.querySelectorAll('audio')).some(a=>!a.paused))render()}
  const pending=records.some(r=>r.pendingCloud);cloudStatus(pending?'In attesa di salvataggio…':'Salvato online');if(pending)setTimeout(syncCloud,500)}catch{cloudStatus(records.some(r=>r.pendingCloud)?'Offline · messaggi in attesa':'Offline · copia sul dispositivo')}finally{cloudSyncing=false}}
