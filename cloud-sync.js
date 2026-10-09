@@ -3,9 +3,14 @@
 const API='https://uno-spazio-per-te.daintysiren.chatgpt.site',encoder=new TextEncoder();
 const hex=buffer=>Array.from(new Uint8Array(buffer),b=>b.toString(16).padStart(2,'0')).join('');
 const digest=s=>crypto.subtle.digest('SHA-256',encoder.encode(s));
-const params=new URLSearchParams(location.hash.slice(1));let secret=params.get('chat');
-if(secret&&!/^[A-Za-z0-9_-]{43}$/.test(secret))secret=null;
-try{if(secret)localStorage.setItem('fabio-cloud-access',secret);else secret=localStorage.getItem('fabio-cloud-access')}catch{}
+const validSecret=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{43}$/.test(value);
+function secretFromLink(value){
+ try{const url=new URL(value.trim());if(url.origin!==location.origin||url.pathname.replace(/index\.html$/,'').replace(/\/$/,'')!==location.pathname.replace(/index\.html$/,'').replace(/\/$/,''))return null;const valueInLink=new URLSearchParams(url.hash.slice(1)).get('chat');return validSecret(valueInLink)?valueInLink:null}catch{return null}
+}
+const params=new URLSearchParams(location.hash.slice(1)),provided=params.get('chat');let secret=validSecret(provided)?provided:null;
+try{if(secret)localStorage.setItem('fabio-cloud-access',secret);else if(!params.has('chat')){const saved=localStorage.getItem('fabio-cloud-access');if(validSecret(saved))secret=saved}}catch{}
+function chatURL(access){if(!validSecret(access))return null;const url=new URL(location.href);url.search='?v=20261009-1';url.hash='chat='+access;return url.href}
+root.ChatAccess={secretFromLink,chatURL,recipientURL:()=>chatURL(secret)};
 if(!secret){root.ChatCloud=null;return}
 let auth,key,identity;
 const ready=(async()=>{auth=hex(await digest('auth:'+secret));identity=hex(await digest('store:'+secret)).slice(0,24);key=await crypto.subtle.importKey('raw',await digest('enc:'+secret),{name:'AES-GCM'},false,['encrypt','decrypt']);return identity})();
